@@ -1,0 +1,107 @@
+
+[
+  {
+    "id": "basic_get_endpoint",
+    "question": "How do I create a basic GET endpoint in FastAPI?",
+    "should_answer": true,
+    "expected_source_url": "https://fastapi.tiangolo.com/tutorial/first-steps/",
+    "expects_python_code": true,
+    "code_expectation": "get_endpoint"
+  },
+  {
+    "id": "path_parameters",
+    "question": "How do I declare a path parameter in a FastAPI endpoint?",
+    "should_answer": true,
+    "expected_source_url": "https://fastapi.tiangolo.com/tutorial/path-params/",
+    "expects_python_code": true,
+    "code_expectation": "path_parameter"
+  },
+  {
+    "id": "query_parameters",
+    "question": "How do I read a query parameter in FastAPI?",
+    "should_answer": true,
+    "expected_source_url": "https://fastapi.tiangolo.com/tutorial/query-params/",
+    "expects_python_code": true,
+    "code_expectation": "query_parameter"
+  },
+  {
+    "id": "request_body",
+    "question": "How do I receive a JSON request body using a Pydantic model?",
+    "should_answer": true,
+    "expected_source_url": "https://fastapi.tiangolo.com/tutorial/body/",
+    "expects_python_code": true,
+    "code_expectation": "request_body"
+  },
+  {
+  "id": "basic_get_endpoint_rephrased",
+  "question": "How do I add a GET endpoint to a FastAPI application?",
+  "should_answer": true,
+  "expected_source_url": "https://fastapi.tiangolo.com/tutorial/first-steps/",
+  "expects_python_code": true,
+  "code_expectation": "get_endpoint"
+},
+{
+  "id": "path_parameters_rephrased",
+  "question": "How do I access a path parameter inside a FastAPI route?",
+  "should_answer": true,
+  "expected_source_url": "https://fastapi.tiangolo.com/tutorial/path-params/",
+  "expects_python_code": true,
+  "code_expectation": "path_parameter"
+},
+{
+  "id": "query_parameters_rephrased",
+  "question": "How do I declare a required query parameter in FastAPI?",
+  "should_answer": true,
+  "expected_source_url": "https://fastapi.tiangolo.com/tutorial/query-params/",
+  "expects_python_code": true,
+  "code_expectation": "query_parameter"
+},
+{
+  "id": "optional_query_parameter",
+  "question": "How do I make a query parameter optional in FastAPI?",
+  "should_answer": true,
+  "expected_source_url": "https://fastapi.tiangolo.com/tutorial/query-params/",
+  "expects_python_code": true,
+  "code_expectation": "optional_query_parameter"
+},
+{
+  "id": "request_body_rephrased",
+  "question": "How do I define a request body with a Pydantic model in FastAPI?",
+  "should_answer": true,
+  "expected_source_url": "https://fastapi.tiangolo.com/tutorial/body/",
+  "expects_python_code": true,
+  "code_expectation": "request_body"
+}, 
+{
+  "id": "unsupported_cors",
+  "question": "How do I configure Cross-Origin Resource Sharing (CORS) middleware in FastAPI?",
+  "should_answer": false,
+  "expected_source_url": null,
+  "expects_python_code": false,
+  "code_expectation": null
+},
+{
+  "id": "unsupported_websockets",
+  "question": "How do I create a WebSocket endpoint in FastAPI?",
+  "should_answer": false,
+  "expected_source_url": null,
+  "expects_python_code": false,
+  "code_expectation": null
+},
+{
+  "id": "unsupported_testing",
+  "question": "How do I test FastAPI endpoints using TestClient?",
+  "should_answer": false,
+  "expected_source_url": null,
+  "expects_python_code": false,
+  "code_expectation": null
+},
+  {
+    "id": "unsupported_topic",
+    "question": "How do I implement quantum teleportation for zebras?",
+    "should_answer": false,
+    "expected_source_url": null,
+    "expects_python_code": false,
+    "code_expectation": null
+  }
+]
