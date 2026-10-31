@@ -175,3 +175,30 @@ def test_invalid_model_output_returns_502(monkeypatch):
     assert response.json()["detail"] == (
         "The local model returned invalid structured output."
     )
+
+
+def test_health_endpoint_returns_200():
+    response = client.get("/health")
+
+    assert response.status_code == 200
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {},
+        {"question": ""},
+        {"question": 123},
+        {"question": "abcd"},
+        {"question": "     "},
+        {"question": "a" * 1001},
+    ],
+)
+def test_invalid_support_questions_return_422(payload):
+    response = client.post(
+        "/support",
+        json=payload,
+    )
+
+    assert response.status_code == 422
+
