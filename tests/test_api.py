@@ -201,4 +201,3 @@ def test_invalid_support_questions_return_422(payload):
     )
 
     assert response.status_code == 422
-
