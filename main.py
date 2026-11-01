@@ -137,15 +137,47 @@ When the documentation supports the question:
 - Set reason_if_not_answerable to null.
 
 For Python code:
-- Return a complete example in a fenced Markdown block labelled python.
-- Correct every reported syntax or structure error.
-- Use correct FastAPI decorators, such as @app.post("/items").
-- A query-parameter example must not add an unrelated path parameter.
-- A path-parameter example must declare the same parameter in the route
-  path and the handler signature.
-- A request-body example must define a Pydantic BaseModel and use it as
-  the annotation for the relevant POST handler parameter.
-- Include required imports and avoid unnecessary complexity.
+- Return one complete, standalone Python script.
+- Always include every required import.
+- Always initialize the FastAPI application using app = FastAPI().
+- Use correct decorator syntax, exactly like @app.get("/items/").
+- Never write decorators using assignment syntax.
+- Put the complete code inside a Markdown code fence labelled python.
+- Never write the word python on a separate line instead of a code fence.
+
+For GET endpoint examples:
+- Import FastAPI from fastapi.
+- Initialize app using FastAPI().
+- Define the endpoint using @app.get("/").
+
+For path parameter examples:
+- Include the path parameter inside the route using curly braces.
+- Declare the same parameter in the function signature.
+- Give the parameter a Python type annotation.
+- Do not omit its type annotation.
+
+For query parameter examples:
+- Use a route without path parameters.
+- Declare the query parameter in the function signature.
+- Do not add unrelated parameters.
+
+For optional query parameter examples:
+- Use a route without path parameters.
+- Give the query parameter a default value of None.
+- Use an optional type annotation.
+
+For request body examples:
+- Import BaseModel from pydantic.
+- Define a class that inherits from BaseModel.
+- Use that class as the POST handler parameter's type annotation.
+- Use the correct @app.post("/items/") decorator.
+
+For every answer:
+- Explain only the concept asked about.
+- Do not include unrelated documentation notes or examples.
+- Do not copy unrelated information from other retrieved passages.
+- Preserve a supporting quotation and its correct document ID.
+- Do not invent facts or quotations.
 
 Do not abstain merely because the previous answer was invalid. Abstain only
 when the supplied evidence does not support an answer. In that case, set
@@ -259,11 +291,14 @@ async def answer_support_question(
                 if not code_ok:
                     code_error = code_message
 
-            if code_error:
-                logger.warning("The model returned invalid Python code: %s", code_error)
 
-                # For the four concepts with tested templates, prefer a complete,
-                # deterministic answer over another unreliable generated revision.
+            if code_error:
+                logger.warning(
+                    "The model returned invalid Python code: %s",
+                    code_error,
+                )
+
+                # First choice: use a validated deterministic template.
                 fallback_answer = apply_code_template(expectation)
 
                 if fallback_answer is not None:
@@ -272,11 +307,13 @@ async def answer_support_question(
                         required=True,
                         expectation=expectation,
                     )
+
                     if not fallback_ok:
                         logger.error(
                             "The deterministic fallback failed validation: %s",
                             fallback_message,
                         )
+
                         return abstain(
                             question,
                             "The deterministic code example failed validation: "
@@ -285,10 +322,14 @@ async def answer_support_question(
 
                     draft.answer = fallback_answer
                     used_fallback = True
-                    logger.info(  "Using validated '%s' fallback template.", expectation )
+
+                    logger.info(
+                        "Using validated '%s' fallback template.",
+                        expectation,
+                    )
+
                 else:
-                    # Questions without a known template can still get one
-                    # focused correction attempt from the correction agent.
+                    # No template exists. Give the correction agent one attempt.
                     correction_input = json.dumps(
                         {
                             "question": question,
@@ -298,29 +339,33 @@ async def answer_support_question(
                             "expected_code_structure": expectation,
                             "correction_request": (
                                 "Correct the validation failure in your previous answer. "
-                                "It may concern Python syntax, missing code formatting, "
-                                "or code structure. Return the complete corrected answer, "
-                                "use only the supplied documentation, and preserve an exact "
-                                "supporting quotation and the correct source document ID. "
-                                "If the evidence does not support an answer, abstain."
+                                "Return a complete corrected answer. "
+                                "Use only the supplied documentation. "
+                                "Preserve an exact supporting quotation and the "
+                                "correct source document ID. "
+                                "Abstain if the evidence does not support an answer."
                             ),
                         },
                         ensure_ascii=False,
                     )
 
                     logger.info("Requesting one corrected answer.")
+
                     correction_result = await correction_agent.run(correction_input)
                     draft = correction_result.output
 
                     if draft.can_answer:
                         if not draft.answer or not draft.answer.strip():
-                            corrected_error = "The corrected draft did not contain an answer."
+                            corrected_error = (
+                                "The corrected draft did not contain an answer."
+                            )
                         else:
                             corrected_ok, corrected_message = validate_python_examples(
                                 draft.answer,
                                 required=False,
                                 expectation=None,
                             )
+
                             corrected_error = (
                                 None if corrected_ok else corrected_message
                             )
@@ -330,12 +375,12 @@ async def answer_support_question(
                                 "The correction agent failed validation: %s",
                                 corrected_error,
                             )
+
                             return abstain(
                                 question,
                                 "The answer failed validation after one correction "
                                 f"attempt: {corrected_error}",
                             )
-
     except TimeoutError:
         logger.exception("The local model timed out.")
         raise HTTPException(
@@ -447,19 +492,9 @@ async def answer_support_question(
         )
 
 
-    # Step 9: Build the final response.
-    # For supported concepts, always return the canonical template.
-    if expectation is not None:
-        final_answer = apply_code_template(expectation)
+    # Step 9: Return the validated model answer or validated fallback.
+    final_answer = draft.answer.strip()
 
-        if final_answer is None:
-            return abstain(
-                question,
-                "The canonical answer template is unavailable.",
-            )
-    else:
-        final_answer = draft.answer.strip()
-    
     return SupportResponse(
         question=question,
         answer=final_answer,

@@ -179,3 +179,121 @@ def test_optional_query_parameter_selects_relevant_evidence():
     assert quote == (
         "An optional query parameter can have a default value."
     )
+
+def test_get_endpoint_without_fastapi_import_fails():
+    answer = textwrap.dedent("""\
+        ```python
+        app = FastAPI()
+
+        @app.get("/")
+        async def root():
+            return {"message": "Hello World"}
+        ```
+    """)
+
+    valid, message = validate_python_examples(
+        answer,
+        required=True,
+        expectation="get_endpoint",
+    )
+
+    assert not valid
+    assert "from fastapi import FastAPI" in message
+
+
+def test_path_parameter_without_type_annotation_fails():
+    answer = textwrap.dedent("""\
+        ```python
+        from fastapi import FastAPI
+
+        app = FastAPI()
+
+        @app.get("/items/{item_id}")
+        async def read_item(item_id):
+            return {"item_id": item_id}
+        ```
+    """)
+
+    valid, message = validate_python_examples(
+        answer,
+        required=True,
+        expectation="path_parameter",
+    )
+
+    assert not valid
+    assert "path parameter" in message.lower()
+
+
+def test_query_parameter_with_unrelated_path_parameter_fails():
+    answer = textwrap.dedent("""\
+        ```python
+        from fastapi import FastAPI
+
+        app = FastAPI()
+
+        @app.get("/items/{item_id}")
+        async def read_item(item_id: str, needy: str):
+            return {"item_id": item_id, "needy": needy}
+        ```
+    """)
+
+    valid, message = validate_python_examples(
+        answer,
+        required=True,
+        expectation="query_parameter",
+    )
+
+    assert not valid
+    assert "no path parameters" in message
+
+
+def test_request_body_without_pydantic_import_fails():
+    answer = textwrap.dedent("""\
+        ```python
+        from fastapi import FastAPI
+
+        app = FastAPI()
+
+        class Item(BaseModel):
+            name: str
+            price: float
+
+        @app.post("/items/")
+        async def create_item(item: Item):
+            return item
+        ```
+    """)
+
+    valid, message = validate_python_examples(
+        answer,
+        required=True,
+        expectation="request_body",
+    )
+
+    assert not valid
+    assert "from pydantic import BaseModel" in message
+
+
+
+def test_nested_fastapi_import_does_not_satisfy_required_import():
+    answer = textwrap.dedent("""\
+        ```python
+        def load_framework():
+            from fastapi import FastAPI
+
+        app = FastAPI()
+
+        @app.get("/")
+        async def root():
+            return {"message": "Hello World"}
+        ```
+    """)
+
+    valid, message = validate_python_examples(
+        answer,
+        required=True,
+        expectation="get_endpoint",
+    )
+
+    assert not valid
+    assert "from fastapi import FastAPI" in message

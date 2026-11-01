@@ -1,6 +1,7 @@
 import ast
 import re
 
+
 PYTHON_BLOCK_PATTERN = re.compile(
     r"```python\s*\n(.*?)```",
     flags=re.IGNORECASE | re.DOTALL,
@@ -197,6 +198,11 @@ def validate_code_semantics(
         )
 
         parameter_names = {argument.arg for argument in arguments}
+        annotated_parameter_names = {
+            argument.arg
+            for argument in arguments
+            if argument.annotation is not None
+        }
 
         annotation_names = {
             argument.annotation.id
@@ -266,6 +272,7 @@ def validate_code_semantics(
                     "path_parameters": path_parameters,
                     "parameter_names": parameter_names,
                     "annotation_names": annotation_names,
+                    "annotated_parameter_names": annotated_parameter_names,
                     "defaulted_parameter_names": (
                         defaulted_parameter_names
                     ),
@@ -285,10 +292,12 @@ def validate_code_semantics(
 
             path_parameters = handler["path_parameters"]
             declared_parameters = handler["parameter_names"]
+            annotated_parameters = handler["annotated_parameter_names"]
 
             if (
                 path_parameters
                 and path_parameters.issubset(declared_parameters)
+                and path_parameters.issubset(annotated_parameters)
             ):
                 return None
 
@@ -381,7 +390,28 @@ def validate_code_semantics(
 
 
 
+def _has_imported_name(
+    tree: ast.Module,
+    module: str,
+    name: str,
+) -> bool:
+    """Check whether a module imports a specific name."""
 
+    for node in tree.body:
+        if not isinstance(node, ast.ImportFrom):
+            continue
+
+        if node.module != module:
+            continue
+
+        for imported_name in node.names:
+            if imported_name.name != name:
+                continue
+
+            if imported_name.asname is None or imported_name.asname == name:
+                return True
+
+    return False
 
 def validate_python_examples(
     answer: str,
@@ -418,18 +448,47 @@ def validate_python_examples(
         parsed_trees.append(tree)
 
     if expectation is not None:
-        semantic_errors = [
-            validate_code_semantics(tree, expectation)
-            for tree in parsed_trees
-        ]
+        validation_errors = []
 
-        # At least one valid code block must demonstrate the expected concept.
-        if all(error is not None for error in semantic_errors):
-            return (
-                False,
-                f"No Python code block met the '{expectation}' expectation. "
-                f"First issue: {semantic_errors[0]}",
+        for block_number, tree in enumerate(parsed_trees, start=1):
+            semantic_error = validate_code_semantics(
+                tree,
+                expectation,
             )
+
+            if semantic_error is not None:
+                validation_errors.append(semantic_error)
+                continue
+
+            if not _has_imported_name(tree, "fastapi", "FastAPI"):
+                validation_errors.append(
+                    f"Python code block {block_number} must include "
+                    "'from fastapi import FastAPI'."
+                )
+                continue
+
+            if (
+                expectation == "request_body"
+                and not _has_imported_name(tree, "pydantic", "BaseModel")
+            ):
+                validation_errors.append(
+                    f"Python code block {block_number} must include "
+                    "'from pydantic import BaseModel'."
+                )
+                continue
+
+            # At least one complete code block passed every check.
+            return (
+                True,
+                f"At least one Python code block passed syntax validation, "
+                f"the '{expectation}' structural check, and required import checks.",
+            )
+
+        return (
+            False,
+            f"No Python code block met the '{expectation}' expectation. "
+            f"First issue: {validation_errors[0]}",
+        )
 
     return (
         True,
