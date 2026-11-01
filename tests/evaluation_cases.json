@@ -73,6 +73,46 @@
   "code_expectation": "request_body"
 }, 
 {
+  "id": "response_model",
+  "question": "What does a FastAPI response model do to the data returned by an endpoint?",
+  "should_answer": true,
+  "expected_source_url": "https://fastapi.tiangolo.com/tutorial/response-model/",
+  "expects_python_code": false,
+  "code_expectation": null
+},
+{
+  "id": "handling_errors",
+  "question": "Why does FastAPI documentation say to raise HTTPException rather than return it?",
+  "should_answer": true,
+  "expected_source_url": "https://fastapi.tiangolo.com/tutorial/handling-errors/",
+  "expects_python_code": false,
+  "code_expectation": null
+},
+{
+  "id": "response_status_code",
+  "question": "How do I set an endpoint's HTTP response status code in FastAPI?",
+  "should_answer": true,
+  "expected_source_url": "https://fastapi.tiangolo.com/tutorial/response-status-code/",
+  "expects_python_code": true,
+  "code_expectation": "response_status_code"
+},
+{
+  "id": "dependencies",
+  "question": "What does FastAPI's dependency injection system provide to a path operation function?",
+  "should_answer": true,
+  "expected_source_url": "https://fastapi.tiangolo.com/tutorial/dependencies/",
+  "expects_python_code": false,
+  "code_expectation": null
+},
+{
+  "id": "oauth2_jwt",
+  "question": "Is a JWT's information encrypted, and what can its signature verify?",
+  "should_answer": true,
+  "expected_source_url": "https://fastapi.tiangolo.com/tutorial/security/oauth2-jwt/",
+  "expects_python_code": false,
+  "code_expectation": null
+},
+{
   "id": "unsupported_cors",
   "question": "How do I configure Cross-Origin Resource Sharing (CORS) middleware in FastAPI?",
   "should_answer": false,

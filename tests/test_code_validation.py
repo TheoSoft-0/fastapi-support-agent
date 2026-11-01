@@ -27,6 +27,9 @@ def test_supported_concepts_map_to_expected_documentation():
     assert expected_source_url("request_body") == (
         "https://fastapi.tiangolo.com/tutorial/body/"
     )
+    assert expected_source_url("response_status_code") == (
+        "https://fastapi.tiangolo.com/tutorial/response-status-code/"
+    )
 
     assert expected_source_url(None) is None
     assert expected_source_url("unknown_concept") is None
@@ -93,6 +96,7 @@ def test_all_code_templates_pass_structural_validation():
         "query_parameter",
         "optional_query_parameter",
         "request_body",
+        "response_status_code",
     ]
 
     for expectation in expectations:
@@ -112,6 +116,57 @@ def test_all_code_templates_pass_structural_validation():
 
 def test_unknown_expectation_has_no_template():
     assert apply_code_template("unknown_concept") is None
+
+def test_response_status_code_question_is_classified():
+    assert (
+        infer_code_expectation(
+            "How do I set an endpoint's HTTP response status code in FastAPI?"
+        )
+        == "response_status_code"
+    )
+
+def test_response_status_code_in_decorator_passes():
+    answer = textwrap.dedent("""\
+        ```python
+        from fastapi import FastAPI
+
+        app = FastAPI()
+
+        @app.post("/items/", status_code=201)
+        async def create_item(name: str):
+            return {"name": name}
+        ```
+    """)
+
+    valid, message = validate_python_examples(
+        answer,
+        required=True,
+        expectation="response_status_code",
+    )
+
+    assert valid, message
+
+def test_response_status_code_as_function_parameter_fails():
+    answer = textwrap.dedent("""\
+        ```python
+        from fastapi import FastAPI
+
+        app = FastAPI()
+
+        @app.get("/items/{item_id}")
+        async def read_item(item_id: str, status_code: int = 200):
+            return {"item": "The Foo Wrestlers"}
+        ```
+    """)
+
+    valid, message = validate_python_examples(
+        answer,
+        required=True,
+        expectation="response_status_code",
+    )
+
+    assert not valid
+    assert "status_code must be in the decorator" in message
 
 
 def test_question_classification_distinguishes_optional_query_parameters():

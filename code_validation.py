@@ -46,7 +46,6 @@ from pydantic import BaseModel
 
 app = FastAPI()
 
-
 class Item(BaseModel):
     name: str
     description: str | None = None
@@ -56,8 +55,15 @@ class Item(BaseModel):
 @app.post("/items/")
 async def create_item(item: Item):
     return item''',
-}
 
+    "response_status_code": '''from fastapi import FastAPI
+
+app = FastAPI()
+
+@app.post("/items/", status_code=201)
+async def create_item(name: str):
+    return {"name": name}''',
+}
 
 CODE_EXPLANATIONS = {
     "get_endpoint": (
@@ -85,6 +91,11 @@ CODE_EXPLANATIONS = {
         "use it as a parameter annotation in the endpoint function. "
         "FastAPI interprets it as a request body and validates the data."
     ),
+    "response_status_code": (
+        "Set an endpoint's HTTP response status code using the "
+        "status_code argument in its route decorator. "
+        "Here, POST requests return HTTP status code 201."
+    ),
 }
 
 
@@ -103,6 +114,9 @@ EXPECTED_SOURCE_URLS = {
     ),
     "request_body": (
         "https://fastapi.tiangolo.com/tutorial/body/"
+    ),
+    "response_status_code": (
+        "https://fastapi.tiangolo.com/tutorial/response-status-code/"
     ),
 }
 
@@ -146,6 +160,10 @@ def select_evidence_quote(
         "request_body": (
             "request body",
             "pydantic model",
+        ),
+        "response_status_code": (
+            "status_code",
+            "response status code",
         ),
     }
 
@@ -270,6 +288,13 @@ def validate_code_semantics(
                 {
                     "method": method,
                     "path_parameters": path_parameters,
+                    "has_status_code_keyword": any(
+                        keyword.arg == "status_code"
+                        for keyword in decorator.keywords
+                    ),
+                    "status_code_function_parameter": (
+                        "status_code" in parameter_names
+                    ),
                     "parameter_names": parameter_names,
                     "annotation_names": annotation_names,
                     "annotated_parameter_names": annotated_parameter_names,
@@ -278,7 +303,19 @@ def validate_code_semantics(
                     ),
                 }
             )
+    if expectation == "response_status_code":
+        for handler in handlers:
+            if (
+                handler["has_status_code_keyword"]
+                and not handler["status_code_function_parameter"]
+            ):
+                return None
 
+        return (
+            "No route decorator was found with a status_code keyword. "
+            "The status_code must be in the decorator, not the function "
+            "parameters."
+        )
     if expectation == "get_endpoint":
         if any(handler["method"] == "get" for handler in handlers):
             return None
@@ -561,7 +598,11 @@ def infer_code_expectation(question: str) -> str | None:
             return "optional_query_parameter"
 
         return "query_parameter"
-
+    if any(
+        marker in question
+        for marker in ("status code", "status_code", "status-code")
+    ):
+        return "response_status_code"
     if "path parameter" in question or "path param" in question:
         return "path_parameter"
 
