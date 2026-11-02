@@ -1,13 +1,14 @@
 from __future__ import annotations
 
-import re
-import json
 import asyncio
+import json
 import logging
+import re
+from dataclasses import dataclass, field
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field, field_validator
-from pydantic_ai import Agent
+from pydantic_ai import Agent, RunContext
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.models.ollama import OllamaModel
 from pydantic_ai.output import NativeOutput
@@ -20,7 +21,7 @@ from code_validation import (
     select_evidence_quote,
     validate_python_examples,
 )
-from retrieval import load_documents, search_documents
+from retrieval import Document, load_documents, search_documents
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +29,123 @@ logger = logging.getLogger(__name__)
 # Load the local documentation once when the application starts.
 DOCUMENTS = load_documents()
 DOCUMENTS_BY_ID = {document.id: document for document in DOCUMENTS}
+
+
+@dataclass
+class SupportDependencies:
+    """Data available to the retrieval agent during one request."""
+
+    documents: list[Document]
+
+    retrieved_passages: dict[str, list[str]] = field(default_factory=dict)
+
+    # All calls to the underlying documentation search function.
+    search_calls: int = 0
+    search_queries: list[str] = field(default_factory=list)
+
+    # Calls initiated specifically by the AI agent's registered tool.
+    agent_tool_calls: int = 0
+    agent_tool_queries: list[str] = field(default_factory=list)
+    agent_tool_document_ids: list[str] = field(default_factory=list)
+
+    # True when Python had to perform a search after the agent skipped it.
+    application_fallback_used: bool = False
+
+
+FASTAPI_DOCUMENTATION_TERMS = (
+    "fastapi",
+    "get endpoint",
+    "path parameter",
+    "query parameter",
+    "request body",
+    "pydantic",
+    "response model",
+    "http exception",
+    "httpexception",
+    "status code",
+    "dependency injection",
+    "oauth2",
+    "jwt",
+    "json web token",
+    "cors",
+    "cross-origin",
+    "websocket",
+    "web socket",
+    "testclient",
+    "test client",
+)
+
+
+def question_requires_documentation_search(question: str) -> bool:
+    """Identify questions covered by the FastAPI support domain."""
+
+    normalized = " ".join(question.casefold().split())
+
+    return any(
+        term in normalized
+        for term in FASTAPI_DOCUMENTATION_TERMS
+    )
+
+
+def search_documentation(
+    query: str,
+    dependencies: SupportDependencies,
+) -> str:
+    """Search local documentation and retain passages for verification."""
+
+    cleaned_query = query.strip()
+
+    dependencies.search_calls += 1
+    dependencies.search_queries.append(cleaned_query)
+
+    if not cleaned_query:
+        return "No search was performed because the query was empty."
+
+    results = search_documents(
+        cleaned_query,
+        dependencies.documents,
+        limit=3,
+    )
+
+    evidence = []
+
+    for result in results:
+        document = result.document
+
+        stored_passages = dependencies.retrieved_passages.setdefault(
+            document.id,
+            [],
+        )
+
+        current_passages = []
+
+        for passage in result.passages:
+            if not passage.strip():
+                continue
+
+            if passage not in stored_passages:
+                stored_passages.append(passage)
+
+            if passage not in current_passages:
+                current_passages.append(passage)
+
+        if current_passages:
+            evidence.append(
+                {
+                    "id": document.id,
+                    "title": document.title,
+                    "url": document.url,
+                    "passages": current_passages,
+                }
+            )
+
+    if not evidence:
+        return (
+            "No relevant official FastAPI documentation passages "
+            "were found for this search query."
+        )
+
+    return json.dumps(evidence, ensure_ascii=False)
 
 
 class SupportQuestion(BaseModel):
@@ -69,8 +187,88 @@ model = OllamaModel(
 )
 
 
-# The model generates answers; Python controls retrieval and validation.
+# Agent-directed retrieval and independently validated answer generation.
+# Agent 1: decides when and how to retrieve documentation.
 support_agent = Agent(
+    model,
+    deps_type=SupportDependencies,
+    output_type=str,
+instructions="""
+You are a FastAPI documentation retrieval agent.
+
+Your task is to retrieve official documentation for a separate
+support-answer agent.
+
+Your local documentation collection covers these nine topics:
+
+- FastAPI first steps and application creation.
+- Path parameters.
+- Query parameters.
+- Request bodies and Pydantic models.
+- Response models.
+- Handling errors and HTTPException.
+- HTTP response status codes.
+- Dependency injection.
+- OAuth2 authentication and JSON Web Tokens (JWT).
+
+IMPORTANT SCOPE RULE:
+
+A question is within your documentation scope when it concerns
+any of the nine topics listed above.
+
+The user does not need to mention FastAPI explicitly.
+
+In particular:
+- Questions about JWT contents, signatures, or verification
+  belong to the OAuth2/JWT documentation.
+- Questions about OAuth2 authentication belong to that documentation.
+- Questions about path parameters belong to the path-parameter documentation.
+- Questions about request bodies belong to the request-body documentation.
+
+For questions within your documentation scope:
+- Call search_fastapi_documentation before finishing.
+- Choose a focused search query containing the important technical terms.
+- Review the returned passages.
+- If the first search finds no relevant passages, try one more focused query.
+- Stop searching when relevant passages have been found.
+
+For questions outside all nine documentation topics:
+- Do not call the documentation search tool.
+- State that the question is outside your documentation scope.
+
+After searching:
+- Briefly state whether relevant documentation was found.
+- Use ordinary text.
+- Do not produce a final support answer.
+- Do not generate Python code.
+- Do not invent documentation or search results.
+
+The retrieved passages will be provided to another agent.
+""",
+    model_settings={"temperature": 0.0},
+)
+
+
+@support_agent.tool
+def search_fastapi_documentation(
+    ctx: RunContext[SupportDependencies],
+    query: str,
+) -> str:
+    """Search official FastAPI documentation stored locally."""
+
+    ctx.deps.agent_tool_calls += 1
+    ctx.deps.agent_tool_queries.append(query)
+
+    result = search_documentation(query, ctx.deps)
+
+    for document_id in ctx.deps.retrieved_passages:
+        if document_id not in ctx.deps.agent_tool_document_ids:
+            ctx.deps.agent_tool_document_ids.append(document_id)
+
+    return result
+
+# Agent 2: generates the structured support answer from retrieved evidence.
+answer_agent = Agent(
     model,
     output_type=NativeOutput(ModelDraft),
     instructions="""
@@ -114,8 +312,6 @@ Never invent quotations or document IDs.
 """,
     model_settings={"temperature": 0.0},
 )
-
-
 # Repairs answers that fail code validation.
 correction_agent = Agent(
     model,
@@ -305,59 +501,95 @@ async def answer_support_question(
     question = request.question
     expectation = infer_code_expectation(question)
 
-    # Step 1: Python always performs retrieval.
-    logger.info("Searching local documentation.")
-    results = search_documents(question, DOCUMENTS, limit=3)
-
-    # Keep only non-empty passages, grouped by document ID.
-    retrieved_passages: dict[str, list[str]] = {}
-    for result in results:
-        document_id = result.document.id
-        passages_for_document = retrieved_passages.setdefault(document_id, [])
-
-        for passage in result.passages:
-            if passage.strip() and passage not in passages_for_document:
-                passages_for_document.append(passage)
-
-    # Step 2: Abstain without calling the model if retrieval found no evidence.
-    if not retrieved_passages:
-        logger.info("No relevant documentation passages found.")
-        return abstain(
-            question,
-            "No relevant local documentation passages were found.",
-        )
-
-    logger.info("Retrieved documentation from: %s", list(retrieved_passages))
-
-    # Step 3: Prepare the evidence the model is allowed to use.
-    evidence = []
-    for document_id, passages in retrieved_passages.items():
-        document = DOCUMENTS_BY_ID[document_id]
-        evidence.append(
-            {
-                "id": document.id,
-                "title": document.title,
-                "url": document.url,
-                "passages": passages,
-            }
-        )
-
-    answer_input = json.dumps(
-        {
-            "question": question,
-            "retrieved_documentation": evidence,
-        },
-        ensure_ascii=False,
-    )
-
+    dependencies = SupportDependencies(documents=DOCUMENTS)
     used_fallback = False
 
-    # Step 4: Generate, validate, and recover from invalid answers.
+    # The agent decides when and how to search documentation.
     try:
         async with asyncio.timeout(90):
-            logger.info("Starting structured answer generation.")
-            result = await support_agent.run(answer_input)
-            draft: ModelDraft = result.output
+            logger.info("Starting agent-directed support processing.")
+
+            # Agent 1 decides when and how to search documentation.
+            retrieval_result = await support_agent.run(
+                question,
+                deps=dependencies,
+            )
+            # Recover when the agent skips retrieval for a FastAPI-related question.
+            if (
+                not dependencies.retrieved_passages
+                and question_requires_documentation_search(question)
+            ):
+                logger.warning(
+                    "The retrieval agent returned without evidence. "
+                    "Running deterministic fallback search."
+                )
+
+                dependencies.application_fallback_used = True
+
+                search_documentation(question, dependencies)
+            logger.info(
+                "Documentation retrieval agent completed: %s",
+                retrieval_result.output,
+            )
+
+            retrieved_passages = dependencies.retrieved_passages
+
+            # Reject answers when the retrieval agent found no evidence.
+            if not retrieved_passages:
+                if dependencies.application_fallback_used:
+                    explanation = (
+                        "No relevant local documentation passages were found "
+                        "by the agent or the fallback search."
+                    )
+                elif dependencies.search_calls:
+                    explanation = (
+                        "The agent searched local documentation but "
+                        "found no relevant passages."
+                    )
+                else:
+                    explanation = (
+                        "The agent did not retrieve documentation evidence "
+                        "needed to verify an answer."
+                    )
+
+                return abstain(question, explanation)
+            logger.info(
+                "Documentation searches performed: %s",
+                dependencies.search_queries,
+            )
+
+            logger.info(
+                "Retrieved documentation from: %s",
+                list(retrieved_passages),
+            )
+
+            # Prepare the retrieved evidence for the answer agent.
+            evidence = []
+
+            for document_id, passages in retrieved_passages.items():
+                document = DOCUMENTS_BY_ID[document_id]
+
+                evidence.append(
+                    {
+                        "id": document.id,
+                        "title": document.title,
+                        "url": document.url,
+                        "passages": passages,
+                    }
+                )
+
+            answer_input = json.dumps(
+                {
+                    "question": question,
+                    "retrieved_documentation": evidence,
+                },
+                ensure_ascii=False,
+            )
+
+            # Agent 2 generates the structured support answer.
+            answer_result = await answer_agent.run(answer_input)
+            draft: ModelDraft = answer_result.output
+
 
             code_error = None
             if draft.can_answer:

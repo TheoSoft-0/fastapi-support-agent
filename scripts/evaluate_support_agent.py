@@ -35,6 +35,13 @@ class CaseTrace:
     initial_answer: str | None = None
     initial_validation_error: str | None = None
 
+    tool_call_count: int = 0
+    tool_queries: list[str] = field(default_factory=list)
+    tool_result_document_ids: list[str] = field(default_factory=list)
+
+    retrieval_operation_count: int = 0
+    retrieved_document_ids: list[str] = field(default_factory=list)
+    application_fallback_used: bool = False
 
     fallback_attempted: bool = False
     fallback_used: bool = False
@@ -56,13 +63,47 @@ class EvaluationTrace:
 @contextmanager
 def instrument_application(trace: EvaluationTrace):
     """Measure model generation and recovery without changing application logic."""
-
     original_support_run = app_module.support_agent.run
+    original_answer_run = app_module.answer_agent.run
     original_correction_run = app_module.correction_agent.run
     original_apply_code_template = app_module.apply_code_template
+    original_search_documents = app_module.search_documents
+    def tracked_search_documents(query, documents, limit=3):
+        results = original_search_documents(
+            query,
+            documents,
+            limit=limit,
+        )
 
+        case = trace.current_case
+
+        if case is not None:
+            case.retrieval_operation_count += 1
+
+            case.retrieved_document_ids.extend(
+                result.document.id
+                for result in results
+            )
+
+        return results
+
+    #
     async def tracked_support_run(*args, **kwargs):
         result = await original_support_run(*args, **kwargs)
+
+        case = trace.current_case
+        dependencies = kwargs.get("deps")
+
+        if case is not None and dependencies is not None:
+            case.tool_call_count = dependencies.agent_tool_calls
+            case.tool_queries = list(dependencies.agent_tool_queries)
+            case.tool_result_document_ids = list(
+                dependencies.agent_tool_document_ids
+            )
+
+        return result
+    async def tracked_answer_run(*args, **kwargs):
+        result = await original_answer_run(*args, **kwargs)
 
         current_case = trace.current_case
 
@@ -152,6 +193,11 @@ def instrument_application(trace: EvaluationTrace):
             new=tracked_support_run,
         ),
         patch.object(
+            app_module.answer_agent,
+            "run",
+            new=tracked_answer_run,
+        ),
+        patch.object(
             app_module.correction_agent,
             "run",
             new=tracked_correction_run,
@@ -161,12 +207,40 @@ def instrument_application(trace: EvaluationTrace):
             "apply_code_template",
             new=tracked_apply_code_template,
         ),
+        patch.object(
+            app_module,
+            "search_documents",
+            new=tracked_search_documents,
+        ),
     ):
         yield
 
 
 def print_case_diagnostics(trace: CaseTrace) -> None:
-    """Print the model-generation and recovery results for one case."""
+    """Print tool execution, generation, and recovery results."""
+
+    print(f"AGENT TOOL CALLS: {trace.tool_call_count}")
+    print(f"AGENT TOOL QUERIES: {trace.tool_queries or 'None'}")
+    print(
+        "AGENT TOOL DOCUMENTS: "
+        f"{sorted(set(trace.tool_result_document_ids)) or 'None'}"
+    )
+
+    print(
+        "APPLICATION FALLBACK SEARCH: "
+        f"{trace.application_fallback_used}"
+    )
+
+    print(
+        "TOTAL DOCUMENTATION SEARCHES: "
+        f"{trace.retrieval_operation_count}"
+    )
+
+    print(
+        "DOCUMENTS FOUND BY ALL SEARCHES: "
+        f"{sorted(set(trace.retrieved_document_ids)) or 'None'}"
+    )
+
 
     if not trace.expects_python_code:
         return
@@ -273,14 +347,65 @@ def evaluate_case(
         return False
     finally:
         trace.current_case = None
-
+        case_trace.application_fallback_used = (
+            case_trace.retrieval_operation_count
+            > case_trace.tool_call_count
+        )
     print_case_diagnostics(case_trace)
 
     if response.status_code != 200:
         print(f"API: FAIL — HTTP {response.status_code}")
         print(response.text)
         return False
+    # Verify actual documentation tool execution.
+    expects_documentation_search = case.get(
+        "expects_documentation_search",
+        should_answer,
+    )
 
+    retrieved_urls = [
+        app_module.DOCUMENTS_BY_ID[document_id].url
+        for document_id in case_trace.retrieved_document_ids
+        if document_id in app_module.DOCUMENTS_BY_ID
+    ]
+
+    if expects_documentation_search:
+        search_policy_ok = (
+            case_trace.tool_call_count > 0
+            or case_trace.application_fallback_used
+        )
+
+        if case_trace.tool_call_count > 0:
+            search_method = "AI agent tool"
+        elif case_trace.application_fallback_used:
+            search_method = "application fallback"
+        else:
+            search_method = "no search performed"
+
+        if should_answer:
+            retrieval_evidence_ok = expected_url in retrieved_urls
+        else:
+            retrieval_evidence_ok = not retrieved_urls
+
+    else:
+        search_policy_ok = (
+            case_trace.tool_call_count == 0
+            and case_trace.retrieval_operation_count == 0
+        )
+
+        retrieval_evidence_ok = not retrieved_urls
+        search_method = "search not required"
+
+    print(
+        "DOCUMENTATION SEARCH POLICY: "
+        f"{'PASS' if search_policy_ok else 'FAIL'} "
+        f"({search_method})"
+    )
+
+    print(
+        "EXPECTED DOCUMENTATION EVIDENCE: "
+        f"{'PASS' if retrieval_evidence_ok else 'FAIL'}"
+    )
     result = response.json()
     answer = result.get("answer")
     source = result.get("source")
@@ -368,6 +493,8 @@ def evaluate_case(
 
     case_passed = (
         retrieval_ok
+        and search_policy_ok
+        and retrieval_evidence_ok
         and answer_ok
         and citation_ok
         and code_ok
@@ -377,10 +504,48 @@ def evaluate_case(
 
     return case_passed
 
+def print_tool_usage_summary(trace: EvaluationTrace) -> None:
+    """Report actual agent tool usage and application fallback separately."""
+
+    total = len(trace.cases)
+
+    agent_tool_cases = sum(
+        case.tool_call_count > 0
+        for case in trace.cases
+    )
+
+    fallback_cases = sum(
+        case.application_fallback_used
+        for case in trace.cases
+    )
+
+    searched_cases = sum(
+        case.retrieval_operation_count > 0
+        for case in trace.cases
+    )
+
+    total_agent_tool_calls = sum(
+        case.tool_call_count
+        for case in trace.cases
+    )
+
+    total_search_operations = sum(
+        case.retrieval_operation_count
+        for case in trace.cases
+    )
+
+    print(f"\n{'=' * 70}")
+    print("AGENT TOOL USAGE AND SEARCH RECOVERY")
+
+    print(f"Cases using agent tools: {agent_tool_cases}/{total}")
+    print(f"Cases using application fallback: {fallback_cases}/{total}")
+    print(f"Cases performing documentation searches: {searched_cases}/{total}")
+
+    print(f"Actual agent tool calls: {total_agent_tool_calls}")
+    print(f"Total documentation search operations: {total_search_operations}")
 
 def print_generation_summary(trace: EvaluationTrace) -> None:
     """Print aggregate model-generation and recovery measurements."""
-
     code_cases = [
         case
         for case in trace.cases
@@ -453,7 +618,7 @@ def main() -> int:
                 results.append(
                     evaluate_case(client, case, trace)
                 )
-
+    print_tool_usage_summary(trace)
     print_generation_summary(trace)
 
     passed = sum(results)

@@ -116,6 +116,7 @@
   "id": "unsupported_cors",
   "question": "How do I configure Cross-Origin Resource Sharing (CORS) middleware in FastAPI?",
   "should_answer": false,
+  "expects_documentation_search": true,
   "expected_source_url": null,
   "expects_python_code": false,
   "code_expectation": null
@@ -124,6 +125,7 @@
   "id": "unsupported_websockets",
   "question": "How do I create a WebSocket endpoint in FastAPI?",
   "should_answer": false,
+  "expects_documentation_search": true,
   "expected_source_url": null,
   "expects_python_code": false,
   "code_expectation": null
@@ -132,6 +134,7 @@
   "id": "unsupported_testing",
   "question": "How do I test FastAPI endpoints using TestClient?",
   "should_answer": false,
+  "expects_documentation_search": true,
   "expected_source_url": null,
   "expects_python_code": false,
   "code_expectation": null
