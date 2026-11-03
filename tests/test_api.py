@@ -31,6 +31,86 @@ def install_fake_search(monkeypatch, passage):
     return document
 
 
+def test_search_documentation_rejects_non_string_query(monkeypatch):
+    def unexpected_search(*args, **kwargs):
+        pytest.fail("The search function must not receive an invalid query.")
+
+    monkeypatch.setattr(main, "search_documents", unexpected_search)
+
+    dependencies = main.SupportDependencies(documents=main.DOCUMENTS)
+
+    result = main.search_documentation(None, dependencies)
+
+    assert "must be a string" in result.lower()
+    assert dependencies.search_calls == 1
+    assert dependencies.search_queries == [""]
+    assert dependencies.search_errors == [
+        "Search query must be a string."
+    ]
+
+
+def test_search_documentation_handles_search_failure(monkeypatch):
+    def failing_search(*args, **kwargs):
+        raise RuntimeError("Simulated documentation search failure.")
+
+    monkeypatch.setattr(main, "search_documents", failing_search)
+
+    dependencies = main.SupportDependencies(documents=main.DOCUMENTS)
+
+    result = main.search_documentation("FastAPI GET endpoint", dependencies)
+
+    assert "search failed" in result.lower()
+    assert dependencies.search_calls == 1
+    assert dependencies.search_queries == ["FastAPI GET endpoint"]
+    assert dependencies.search_errors == [
+        "Local documentation search failed."
+    ]
+    assert dependencies.retrieved_passages == {}
+
+
+def test_search_failure_abstains_without_retrying_search(monkeypatch):
+    search_queries = []
+
+    def failing_search(query, documents, limit=3):
+        search_queries.append(query)
+        raise RuntimeError("Simulated documentation search failure.")
+
+    async def fake_retrieval_run(question, *, deps):
+        result = main.search_documentation(question, deps)
+        assert "search failed" in result.lower()
+
+        return SimpleNamespace(
+            output="Documentation search failed."
+        )
+
+    async def answer_agent_must_not_run(*args, **kwargs):
+        pytest.fail("The answer agent must not run without evidence.")
+
+    monkeypatch.setattr(main, "search_documents", failing_search)
+    monkeypatch.setattr(main.support_agent, "run", fake_retrieval_run)
+    monkeypatch.setattr(
+        main.answer_agent,
+        "run",
+        answer_agent_must_not_run,
+    )
+
+    question = "How do I create a basic GET endpoint in FastAPI?"
+
+    response = client.post(
+        "/support",
+        json={"question": question},
+    )
+
+    assert response.status_code == 200
+    assert search_queries == [question]
+
+    body = response.json()
+
+    assert body["answer"] is None
+    assert body["evidence_sufficient"] is False
+    assert "search failed" in body["explanation"].lower()
+
+
 def test_agent_search_with_no_results_abstains(monkeypatch):
     search_calls = []
 
@@ -73,7 +153,8 @@ def test_agent_search_with_no_results_abstains(monkeypatch):
     assert body["evidence_sufficient"] is False
     assert body["source"] is None
     assert body["explanation"] == (
-        "The agent searched local documentation but found no relevant passages."
+        "The agent searched local documentation but "
+        "found no relevant passages."
     )
 
 

@@ -42,6 +42,7 @@ class SupportDependencies:
     # All calls to the underlying documentation search function.
     search_calls: int = 0
     search_queries: list[str] = field(default_factory=list)
+    search_errors: list[str] = field(default_factory=list)
 
     # Calls initiated specifically by the AI agent's registered tool.
     agent_tool_calls: int = 0
@@ -87,25 +88,45 @@ def question_requires_documentation_search(question: str) -> bool:
     )
 
 
+
 def search_documentation(
     query: str,
     dependencies: SupportDependencies,
 ) -> str:
     """Search local documentation and retain passages for verification."""
 
-    cleaned_query = query.strip()
-
     dependencies.search_calls += 1
+
+    if not isinstance(query, str):
+        dependencies.search_queries.append("")
+        dependencies.search_errors.append(
+            "Search query must be a string."
+        )
+        return "Documentation search failed: query must be a string."
+
+    cleaned_query = query.strip()
     dependencies.search_queries.append(cleaned_query)
 
     if not cleaned_query:
         return "No search was performed because the query was empty."
 
-    results = search_documents(
-        cleaned_query,
-        dependencies.documents,
-        limit=3,
-    )
+    try:
+        results = search_documents(
+            cleaned_query,
+            dependencies.documents,
+            limit=3,
+        )
+    except Exception:
+        logger.exception("Local documentation search failed.")
+
+        dependencies.search_errors.append(
+            "Local documentation search failed."
+        )
+
+        return (
+            "Documentation search failed. "
+            "No relevant passages could be retrieved."
+        )
 
     evidence = []
 
@@ -517,6 +538,7 @@ async def answer_support_question(
             # Recover when the agent skips retrieval for a FastAPI-related question.
             if (
                 not dependencies.retrieved_passages
+                and not dependencies.search_errors
                 and question_requires_documentation_search(question)
             ):
                 logger.warning(
@@ -536,7 +558,12 @@ async def answer_support_question(
 
             # Reject answers when the retrieval agent found no evidence.
             if not retrieved_passages:
-                if dependencies.application_fallback_used:
+                if dependencies.search_errors:
+                    explanation = (
+                        "The local documentation search failed. "
+                        "No answer could be verified."
+                    )
+                elif dependencies.application_fallback_used:
                     explanation = (
                         "No relevant local documentation passages were found "
                         "by the agent or the fallback search."
