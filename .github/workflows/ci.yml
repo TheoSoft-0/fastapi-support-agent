@@ -24,7 +24,7 @@ jobs:
           python-version: "3.13"
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v10
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e
 
       - name: Install locked dependencies
         run: uv sync --locked --all-groups --no-install-project
